@@ -8,6 +8,7 @@ A REST API service to fetch detailed information about Counter-Strike 2 items (F
 - **Inspect Link Parsing**: Automatically extracts parameters from standard inspect links.
 - **Structured Response**: Returns clean JSON with all item properties.
 - **Rate Limiting**: Built-in queue to respect Valve's rate limits.
+- **Advanced Calculations**: Automatically calculates Doppler phases, Fade percentages, and Blue Gem status.
 
 ## Getting Started
 
@@ -93,7 +94,10 @@ GET /api/v1/inspect?s=76561198084749846&a=698323590&d=7935523998312483177
   "questid": null,
   "dropreason": null,
   "musicindex": null,
-  "entindex": null
+  "entindex": null,
+  "phase": "Sapphire",
+  "fadePercentage": 99.5,
+  "isBlueGem": false
 }
 ```
 

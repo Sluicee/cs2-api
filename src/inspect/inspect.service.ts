@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, RequestTimeoutException, Logger } from '@nestjs/common';
 import { SteamService } from '../steam/steam.service';
+import { getDopplerPhase, getFadePercentage, isBlueGem, WEAPON_DEFINDEX_MAP, isFadeSkin } from './inspect.utils';
 
 @Injectable()
 export class InspectService {
@@ -28,7 +29,7 @@ export class InspectService {
                         reject(new BadRequestException('Failed to inspect item (GC returned null)'));
                         return;
                     }
-                    resolve(item);
+                    resolve(this.enhanceItem(item));
                 });
             } catch (err) {
                 clearTimeout(timeout);
@@ -36,6 +37,37 @@ export class InspectService {
                 reject(new BadRequestException(`Inspect failed: ${err.message}`));
             }
         });
+    }
+
+    private enhanceItem(item: any) {
+        const defindex = item.defindex;
+        const paintindex = item.paintindex;
+        const paintseed = item.paintseed;
+
+        const weaponName = WEAPON_DEFINDEX_MAP[defindex];
+
+        let phase: string | null = null;
+        let fadePercentage: number | null = null;
+        let isBlueGemItem = false;
+
+        if (paintindex) {
+            phase = getDopplerPhase(paintindex);
+        }
+
+        if (weaponName && paintseed && paintindex && isFadeSkin(paintindex)) {
+            fadePercentage = getFadePercentage(weaponName, paintseed);
+        }
+
+        if (paintseed && defindex) {
+            isBlueGemItem = isBlueGem(defindex, paintseed);
+        }
+
+        return {
+            ...item,
+            phase,
+            fadePercentage,
+            isBlueGem: isBlueGemItem
+        };
     }
 
     parseInspectLink(link: string) {
