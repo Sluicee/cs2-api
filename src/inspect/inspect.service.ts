@@ -1,42 +1,111 @@
 import { Injectable, BadRequestException, RequestTimeoutException, Logger } from '@nestjs/common';
 import { SteamService } from '../steam/steam.service';
+import { QueueService } from './queue.service';
+import { CacheService } from './cache.service';
 import { getDopplerPhase, getFadePercentage, isBlueGem, WEAPON_DEFINDEX_MAP, isFadeSkin } from './inspect.utils';
 
 @Injectable()
 export class InspectService {
     private readonly logger = new Logger(InspectService.name);
 
-    constructor(private steamService: SteamService) { }
+    constructor(
+        private steamService: SteamService,
+        private queueService: QueueService,
+        private cacheService: CacheService,
+    ) { }
 
     async inspectItem(params: { s?: string; a: string; d: string; m?: string }) {
-        if (!this.steamService.isGcReady) {
-            throw new RequestTimeoutException('GC Connection not ready');
+        if (!this.steamService.isAnyBotReady) {
+            throw new RequestTimeoutException('No bots connected to GC');
         }
 
         const { s, a, d, m } = params;
-        // If 'm' (market id) is present, owner is usually '0' for the inspect request
         const ownerId = s || '0';
 
-        return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                reject(new RequestTimeoutException('Inspect request timed out'));
-            }, 10000); // 10s timeout to be safe
+        // Check cache first
+        const cached = await this.cacheService.get(ownerId, a, d);
+        if (cached) {
+            this.logger.debug(`Cache hit for ${ownerId}:${a}:${d}`);
+            return cached;
+        }
 
-            try {
-                this.steamService.csgo.inspectItem(ownerId, a, d, (item) => {
-                    clearTimeout(timeout);
-                    if (!item) {
-                        reject(new BadRequestException('Failed to inspect item (GC returned null)'));
-                        return;
-                    }
-                    resolve(this.enhanceItem(item));
-                });
-            } catch (err) {
-                clearTimeout(timeout);
-                this.logger.error(`Inspect error: ${err.message}`);
-                reject(new BadRequestException(`Inspect failed: ${err.message}`));
+        // Queue the request
+        try {
+            const item = await this.queueService.enqueue(params);
+            const enhanced = this.enhanceItem(item);
+
+            // Cache the result
+            await this.cacheService.set(ownerId, a, d, enhanced);
+
+            return enhanced;
+        } catch (err) {
+            this.logger.error(`Inspect error: ${err.message}`);
+            throw new BadRequestException(`Inspect failed: ${err.message}`);
+        }
+    }
+
+    async inspectBatch(items: Array<{ s?: string; a: string; d: string; m?: string }>) {
+        if (!this.steamService.isAnyBotReady) {
+            throw new RequestTimeoutException('No bots connected to GC');
+        }
+
+        // Check cache for all items
+        const cacheChecks = items.map(item => ({
+            s: item.s || '0',
+            a: item.a,
+            d: item.d,
+        }));
+
+        const cachedResults = await this.cacheService.getMany(cacheChecks);
+
+        // Separate cached and non-cached items
+        const results: any[] = new Array(items.length);
+        const toFetch: Array<{ index: number; params: any }> = [];
+
+        items.forEach((item, index) => {
+            const key = `${item.s || '0'}:${item.a}:${item.d}`;
+            const cached = cachedResults.get(key);
+
+            if (cached) {
+                results[index] = cached;
+            } else {
+                toFetch.push({ index, params: item });
             }
         });
+
+        this.logger.log(`Batch: ${cachedResults.size} cached, ${toFetch.length} to fetch`);
+
+        // Fetch non-cached items
+        const fetchPromises = toFetch.map(async ({ index, params }) => {
+            try {
+                const item = await this.queueService.enqueue(params);
+                const enhanced = this.enhanceItem(item);
+
+                // Cache the result
+                const ownerId = params.s || '0';
+                await this.cacheService.set(ownerId, params.a, params.d, enhanced);
+
+                results[index] = enhanced;
+            } catch (err) {
+                this.logger.error(`Failed to inspect item at index ${index}: ${err.message}`);
+                results[index] = {
+                    error: err.message,
+                    params,
+                };
+            }
+        });
+
+        await Promise.all(fetchPromises);
+
+        return {
+            items: results,
+            stats: {
+                total: items.length,
+                cached: cachedResults.size,
+                fetched: toFetch.length,
+                failed: results.filter(r => r.error).length,
+            },
+        };
     }
 
     private enhanceItem(item: any) {
@@ -90,6 +159,14 @@ export class InspectService {
             m: type === 'M' ? id : undefined,
             a,
             d,
+        };
+    }
+
+    getStats() {
+        return {
+            bots: this.steamService.getBotStats(),
+            queue: this.queueService.getStats(),
+            cache: this.cacheService.getStats(),
         };
     }
 }

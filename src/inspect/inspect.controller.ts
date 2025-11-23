@@ -1,5 +1,6 @@
-import { Controller, Get, Query, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Query, Body, BadRequestException } from '@nestjs/common';
 import { InspectService } from './inspect.service';
+import { BatchInspectDto } from './inspect.dto';
 
 @Controller('api/v1/inspect')
 export class InspectController {
@@ -25,5 +26,15 @@ export class InspectController {
         throw new BadRequestException(
             'Either "link" OR ("a", "d", and "s"|"m") parameters are required',
         );
+    }
+
+    @Post('batch')
+    async inspectBatch(@Body() body: BatchInspectDto) {
+        return this.inspectService.inspectBatch(body.items);
+    }
+
+    @Get('stats')
+    async getStats() {
+        return this.inspectService.getStats();
     }
 }
